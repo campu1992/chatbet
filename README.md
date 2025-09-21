@@ -103,18 +103,9 @@ GEMINI_MODEL=gemini-1.5-pro-latest
 
 Interact with the chatbot using natural language to get sports and betting information. The agent is designed to handle a wide range of queries.
 
-*(The following images demonstrate the chatbot in action.)*
 
-image.png
-image.png
-image.png
-image.png
-image.png
-image.png
-image.png
-image.png
-image.png
-image.png
+https://github.com/user-attachments/assets/74a38b65-bfa1-4c20-a8db-10f7b284f898
+
 
 ---
 
