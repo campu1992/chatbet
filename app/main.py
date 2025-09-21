@@ -83,6 +83,11 @@ def chat(request: ChatRequest):
     latest_balance_data = api_client.get_user_balance()
     
     return {
-        "response": final_message.content, 
+        "response": final_message.content,
+        "session_id": request.session_id, # Re-add the missing session_id
         "balance": latest_balance_data.get("money", 0.0) if latest_balance_data else 0.0
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

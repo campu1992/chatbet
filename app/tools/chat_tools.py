@@ -226,12 +226,13 @@ def get_fixtures_by_date(date_query: str):
     """
     logging.info(f"--- Running get_fixtures_by_date for date query: '{date_query}' ---")
     
-    # Configure dateparser to prefer future dates. This ensures "Sunday"
-    # is interpreted as the upcoming Sunday, not the past one.
+    # Set a UTC-aware relative base to avoid timezone issues with "tomorrow"
+    today_utc = datetime.now(timezone.utc)
     date_settings = {
         'TIMEZONE': 'UTC', 
         'RETURN_AS_TIMEZONE_AWARE': True,
-        'PREFER_DATES_FROM': 'future'
+        'PREFER_DATES_FROM': 'future',
+        'RELATIVE_BASE': today_utc 
     }
     parsed_date = dateparser.parse(date_query, settings=date_settings)
     
@@ -285,13 +286,11 @@ def get_fixtures_by_date(date_query: str):
         away = f.get("away_team_data", {}).get("name", {}).get("en", "N/A")
         tournament = f.get("tournament_name", {}).get("en", "N/A")
         match_time = f.get("parsed_datetime").strftime("%H:%M UTC")
-
-        formatted_output.append(
-            f"- {home} vs {away} ({tournament}) at {match_time}"
-        )
+        # Put time at the front to make it more prominent for the LLM
+        formatted_output.append(f"- {match_time}: {home} vs {away} ({tournament})")
     
     logging.info(f"--- get_fixtures_by_date finished successfully, found {len(formatted_output)} matches. ---")
-    return f"Here are the matches for {target_date.strftime('%A, %B %d')}:\n" + "\n".join(formatted_output)
+    return f"Here are the matches for {target_date.strftime('%A, %B %d')}:\\n" + "\\n".join(formatted_output)
 
 @tool
 def find_team_fixture(team_name: str, competition_name: Optional[str] = None):
@@ -481,7 +480,10 @@ def get_daily_odds_analysis(date_query: str) -> str:
     response_parts = [f"Here is the betting analysis for {date_str}:"]
     if safest_bet["fixture"]: response_parts.append(f"- Safest Bet: {safest_bet['team']} to win in '{safest_bet['fixture']}' with odds of {safest_bet['odds']}.")
     if riskiest_bet["fixture"]: response_parts.append(f"- Highest Reward Bet: {riskiest_bet['team']} to win in '{riskiest_bet['fixture']}' with odds of {riskiest_bet['odds']}.")
-    if most_competitive["fixture"]: response_parts.append(f"- Most Competitive Match: '{most_competitive['fixture']}' (odds difference of {most_competitive['diff']:.2f}).")
+    if most_competitive["fixture"]: 
+        explanation = f"This is the most competitive match because the odds are very close, with a difference of only {most_competitive['diff']:.2f}."
+        response_parts.append(f"- Most Competitive Match: '{most_competitive['fixture']}'. {explanation}")
+        
     return "\n".join(response_parts)
 
 @tool
@@ -648,6 +650,29 @@ def calculate_winnings_for_match(team_one: str, team_two: str, amount: float, be
         f"Your total return would be <b>${total_return:.2f}</b> (your ${winnings:.2f} winnings + your ${amount:.2f} stake)."
     ]
     return "<br><br>".join(response)
+
+@tool
+def get_match_recommendation():
+    """
+    Use this tool when a user asks for a match recommendation but does NOT provide a betting amount.
+    This tool finds the safest bet for today and suggests it to the user.
+    """
+    logging.info(f"--- Running get_match_recommendation ---")
+    analysis_result = _analyze_daily_odds("today")
+    if "error" in analysis_result:
+        return f"I can't provide a recommendation right now. Reason: {analysis_result['error']}"
+    
+    safest_bet = analysis_result.get("safest_bet")
+    if not safest_bet or not safest_bet.get("fixture"):
+        return "I couldn't find a clear match to recommend for today."
+        
+    recommendation = (
+        f"Based on today's matches, the safest bet appears to be on "
+        f"<b>{safest_bet['team']}</b> to win in the match '{safest_bet['fixture']}' "
+        f"with odds of <b>{safest_bet['odds']}</b>."
+    )
+    return recommendation
+
 @tool
 def get_betting_recommendation(amount: float) -> str:
     """

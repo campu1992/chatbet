@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 
 import json
 
-from app.core.agent import (
+from app.tools.chat_tools import (
     get_fixtures_by_date,
     find_team_fixture,
     get_teams_by_tournament,
@@ -18,6 +18,7 @@ from app.core.agent import (
     place_real_bet,
     get_odds_for_match,
     get_daily_odds_analysis, # Add the new tool
+    get_match_recommendation, # Add new tool
     get_betting_recommendation, # Add new tool
     calculate_winnings_for_match, # Add new tool
     get_odds_for_outcome, # Add new tool
@@ -39,6 +40,7 @@ tools = [
     place_real_bet,
     get_odds_for_match,
     get_daily_odds_analysis, # Add the new tool
+    get_match_recommendation, # Add new tool
     get_betting_recommendation, # Add new tool
     calculate_winnings_for_match, # Add new tool
     get_odds_for_outcome, # Add new tool
@@ -46,7 +48,9 @@ tools = [
 tool_executor = ToolExecutor(tools)
 
 # Define the model and bind the tools
-model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+# The model name is now configurable via environment variable
+model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+model = ChatGoogleGenerativeAI(model=model_name, temperature=0)
 model = model.bind_tools(tools)
 
 
@@ -62,13 +66,14 @@ Key instructions:
 - For any user question that involves calculating winnings (e.g., "How much would I win if..."), you MUST use the `calculate_winnings_for_match` tool. Do not perform calculations yourself.
 - The `calculate_winnings_for_match` tool returns a complete, user-ready answer. You MUST present its output directly to the user without rephrasing, preserving all markdown formatting.
 - If you need to call `calculate_winnings_for_match` but don't know the teams, ask the user for them first.
-- If a user asks for a general betting recommendation with an amount (e.g., "What should I bet with $100?") and does NOT specify a match, you MUST use the `get_betting_recommendation` tool.
-- After presenting the recommendation from the tool, ALWAYS ask the user a follow-up question like: "This recommendation is based on today's matches. Are you interested in a specific match instead?"
+- If a user asks for a match recommendation WITHOUT an amount (e.g., "What match should I bet on?"), you MUST use the `get_match_recommendation` tool. The tool will provide a complete response.
+- If a user asks for a betting recommendation WITH an amount (e.g., "What can I bet with $100?"), you MUST use the `get_betting_recommendation` tool.
+- After presenting a recommendation from either tool, ALWAYS ask a follow-up question like: "Are you interested in placing a bet on this match, or did you have another game in mind?"
 - When you receive output from `get_betting_recommendation`, present it clearly to the user. You can rephrase it slightly to be more conversational, but you MUST preserve the markdown formatting (bolding, lists, and line breaks) for readability.
-- For broad questions like "best odds today" or "safest bet" for a specific date/range, use the `get_daily_odds_analysis` tool.
-- When asked for odds on a specific match, ALWAYS use the `get_odds_for_match` tool.
-- Use the `match_context` to answer follow-up questions about a specific match that has already been looked up.
-- Keep responses natural, friendly, and concise.
+- When using `get_daily_odds_analysis`, you MUST present the full analysis, including the explanation for why a match is the safest, riskiest, or most competitive.
+- When asked for odds on a specific match, use `get_odds_for_match`.
+- Always include match times when listing fixtures.
+- Keep responses natural, friendly, and helpful.
 """
     
     # If there's match context, add it to the system prompt for the LLM
