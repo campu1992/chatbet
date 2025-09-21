@@ -180,34 +180,38 @@ def _analyze_daily_odds(date_query: str) -> dict:
     
     if not date_fixtures: return {"error": f"No matches found for the period '{date_query}' to analyze."}
 
-    # 3. Analyze odds
-    safest_bet = {"odds": float('inf'), "fixture": None, "team": None}
-    riskiest_bet = {"odds": 0, "fixture": None, "team": None}
+    safest_bet = {"odds": float('inf'), "fixture": None, "team": None, "home_team": None, "away_team": None}
+    riskiest_bet = {"odds": 0, "fixture": None, "team": None, "home_team": None, "away_team": None}
     most_competitive = {"diff": float('inf'), "fixture": None}
 
     for fixture in date_fixtures:
-        # (Odds analysis logic remains the same)
-        fixture_id=fixture.get("id"); tournament_id=fixture.get("tournament_id"); sport_id=fixture.get("sport_id", "1")
+        fixture_id, tournament_id, sport_id = fixture.get("id"), fixture.get("tournament_id"), fixture.get("sport_id", "1")
         if not all([fixture_id, tournament_id, sport_id]): continue
         odds_data = api_client.get_odds(fixture_id=fixture_id, tournament_id=tournament_id, sport_id=sport_id)
         if not odds_data or odds_data.get("status") != "Active": continue
         result_market = odds_data.get("result")
         if not result_market: continue
-        home_data = result_market.get("homeTeam"); away_data = result_market.get("awayTeam")
+        home_data, away_data = result_market.get("homeTeam"), result_market.get("awayTeam")
         if not home_data or not away_data or "odds" not in home_data or "odds" not in away_data: continue
         home_odds, away_odds = home_data["odds"], away_data["odds"]
         home_name, away_name = home_data.get("name", "Home"), away_data.get("name", "Away")
         match_name = f"{home_name} vs {away_name}"
-        if home_odds < safest_bet["odds"]: safest_bet.update({"odds": home_odds, "fixture": match_name, "team": home_name})
-        if away_odds < safest_bet["odds"]: safest_bet.update({"odds": away_odds, "fixture": match_name, "team": away_name})
-        if home_odds > riskiest_bet["odds"]: riskiest_bet.update({"odds": home_odds, "fixture": match_name, "team": home_name})
-        if away_odds > riskiest_bet["odds"]: riskiest_bet.update({"odds": away_odds, "fixture": match_name, "team": away_name})
-        diff = abs(home_odds - away_odds)
-        if diff < most_competitive["diff"]: most_competitive.update({"diff": diff, "fixture": match_name})
+        
+        if home_odds < safest_bet["odds"]:
+            safest_bet = {"odds": home_odds, "fixture": match_name, "team": home_name, "home_team": home_name, "away_team": away_name}
+        if away_odds < safest_bet["odds"]:
+            safest_bet = {"odds": away_odds, "fixture": match_name, "team": away_name, "home_team": home_name, "away_team": away_name}
 
-    # 4. Return structured data
-    if safest_bet["fixture"] is None:
-        return {"error": f"Found matches for '{date_query}', but couldn't analyze their odds."}
+        if home_odds > riskiest_bet["odds"]:
+            riskiest_bet = {"odds": home_odds, "fixture": match_name, "team": home_name, "home_team": home_name, "away_team": away_name}
+        if away_odds > riskiest_bet["odds"]:
+            riskiest_bet = {"odds": away_odds, "fixture": match_name, "team": away_name, "home_team": home_name, "away_team": away_name}
+
+        diff = abs(home_odds - away_odds)
+        if diff < most_competitive["diff"]:
+            most_competitive.update({"diff": diff, "fixture": match_name})
+
+    if safest_bet["fixture"] is None: return {"error": f"Found matches for '{date_query}', but couldn't analyze their odds."}
 
     return {
         "start_date": start_date, "end_date": end_date,
@@ -538,80 +542,12 @@ def get_odds_for_outcome(team_one: str, team_two: str, outcome: str) -> str:
 @tool
 def get_user_balance():
     """
-    Returns the default user's current balance by calling the API.
+    Returns the user's current SIMULATED balance. For the real balance, the user should be told to refresh the session.
     """
-    balance_data = api_client.get_user_balance()
-    if not balance_data or "money" not in balance_data:
-        return "Could not retrieve balance from the API."
-        
-    balance = balance_data["money"]
-    return f"Your current balance is ${balance:.2f}."
+    # This tool is now a placeholder. The balance will be injected directly into the prompt.
+    # The LLM should be instructed to get the balance from the state.
+    return "You can see your current simulated balance at the top of the chat."
 
-@tool
-def place_real_bet(fixture_id: int, tournament_id: str, bet_on_team_name: str, bet_type: str, amount: float):
-    """
-    Places a real bet for a specific fixture and outcome through the API for the default user.
-    'bet_on_team_name' is the name of the team to bet on.
-    'bet_type' must be 'Home', 'Away', or 'Draw'.
-    'amount' is the value of the bet.
-    This action is final and will use the user's real balance.
-    """
-    # First, get current balance to check if the user has enough funds
-    balance_data = api_client.get_user_balance()
-    if not balance_data or "money" not in balance_data:
-        return "Could not verify user balance before placing bet."
-    
-    current_balance = balance_data["money"]
-    if amount <= 0:
-        return "Bet amount must be positive."
-    if amount > current_balance:
-        return f"Insufficient balance. You have ${current_balance:.2f} but tried to bet ${amount:.2f}."
-
-    # Then, get odds to find the correct bet_id and odd value
-    odds_data = api_client.get_odds(fixture_id=fixture_id)
-    if not odds_data or not odds_data.get("data"):
-        return f"Could not find odds for fixture {fixture_id} to place the bet."
-
-    bet_id = None
-    odd_value = None
-    # Find the correct bet based on the team name and bet type
-    home_team = odds_data["data"][0].get("home_team", "").lower()
-    away_team = odds_data["data"][0].get("away_team", "").lower()
-
-    if bet_on_team_name.lower() in home_team and bet_type == "Home":
-        market_key = "Home"
-    elif bet_on_team_name.lower() in away_team and bet_type == "Away":
-        market_key = "Away"
-    elif bet_type == "Draw":
-        market_key = "Draw"
-    else:
-        return f"Could not match bet type '{bet_type}' with team '{bet_on_team_name}'."
-
-    for market in odds_data["data"]:
-        if market["market_name"] == "Match Winner":
-            if market_key in market["odds"]:
-                bet_id = market["bet_id"]
-                odd_value = float(market["odds"][market_key])
-                break
-    
-    if not bet_id or not odd_value:
-        return f"Could not find a valid bet for '{bet_on_team_name}'."
-
-    # Finally, place the bet
-    response = api_client.place_bet(
-        fixture_id=fixture_id,
-        tournament_id=tournament_id,
-        bet_id=bet_id,
-        odd=odd_value,
-        amount=amount
-    )
-
-    if response and response.get("status") == "success":
-        winnings = amount * odd_value
-        new_balance = current_balance - amount
-        return f"Bet placed successfully! You bet ${amount:.2f} on {bet_on_team_name}. Potential winnings: ${winnings:.2f}. Your new balance is approximately ${new_balance:.2f}."
-    else:
-        return f"Failed to place bet. API responded with: {response}"
 
 @tool
 def calculate_winnings_for_match(team_one: str, team_two: str, amount: float, bet_on: str) -> str:
@@ -660,18 +596,25 @@ def get_match_recommendation():
     logging.info(f"--- Running get_match_recommendation ---")
     analysis_result = _analyze_daily_odds("today")
     if "error" in analysis_result:
-        return f"I can't provide a recommendation right now. Reason: {analysis_result['error']}"
+        return json.dumps({"display": f"I can't provide a recommendation right now. Reason: {analysis_result['error']}", "context": None})
     
     safest_bet = analysis_result.get("safest_bet")
     if not safest_bet or not safest_bet.get("fixture"):
-        return "I couldn't find a clear match to recommend for today."
+        return json.dumps({"display": "I couldn't find a clear match to recommend for today.", "context": None})
         
-    recommendation = (
+    recommendation_text = (
         f"Based on today's matches, the safest bet appears to be on "
         f"<b>{safest_bet['team']}</b> to win in the match '{safest_bet['fixture']}' "
         f"with odds of <b>{safest_bet['odds']}</b>."
     )
-    return recommendation
+    
+    context = {
+        "team_one": safest_bet.get("home_team"),
+        "team_two": safest_bet.get("away_team"),
+        "match": safest_bet.get("fixture")
+    }
+    
+    return json.dumps({"display": recommendation_text, "context": context})
 
 @tool
 def get_betting_recommendation(amount: float) -> str:
@@ -680,24 +623,94 @@ def get_betting_recommendation(amount: float) -> str:
     This tool automatically analyzes TODAY'S matches to provide a 60/40 split betting strategy. Do not ask the user for a date.
     """
     logging.info(f"--- Running get_betting_recommendation for amount: ${amount} ---")
-    if amount <= 0: return "The amount to bet must be positive."
+    if amount <= 0: return json.dumps({"display": "The amount to bet must be positive.", "context": None})
     analysis_result = _analyze_daily_odds("today")
     if "error" in analysis_result:
-        return f"I can't provide a recommendation right now because I couldn't analyze today's matches. Reason: {analysis_result['error']}"
+        return json.dumps({"display": f"I can't provide a recommendation right now. Reason: {analysis_result['error']}", "context": None})
+
     safest_bet = analysis_result.get("safest_bet")
     riskiest_bet = analysis_result.get("riskiest_bet")
     if not safest_bet or not riskiest_bet or not safest_bet.get("fixture") or not riskiest_bet.get("fixture"):
-        return "I couldn't find a clear low-risk and high-risk bet for today to create a recommendation."
+        return json.dumps({"display": "I couldn't find enough distinct matches to create a balanced recommendation for today.", "context": None})
+
     low_risk_amount = amount * 0.60
     high_risk_amount = amount * 0.40
     low_risk_winnings = low_risk_amount * safest_bet["odds"]
     high_risk_winnings = high_risk_amount * riskiest_bet["odds"]
     
-    # Use robust HTML tags for formatting to ensure proper rendering in Streamlit.
-    recommendation = [
+    recommendation_text = "<br><br>".join([
         f"With ${amount}, here is a balanced betting strategy for today:",
         f"<b>Low-Risk Bet (60%):</b> Bet <b>${low_risk_amount:.2f}</b> on <b>{safest_bet['team']}</b> to win in the match '{safest_bet['fixture']}'.<br>  - Odds: <b>{safest_bet['odds']}</b><br>  - Potential Winnings: <b>${low_risk_winnings:.2f}</b>",
         f"<b>High-Risk Bet (40%):</b> Bet <b>${high_risk_amount:.2f}</b> on <b>{riskiest_bet['team']}</b> to win in the match '{riskiest_bet['fixture']}'.<br>  - Odds: <b>{riskiest_bet['odds']}</b><br>  - Potential Winnings: <b>${high_risk_winnings:.2f}</b>"
-    ]
-    return "<br><br>".join(recommendation)
+    ])
+
+    context = {
+        "team_one": safest_bet.get("home_team"),
+        "team_two": safest_bet.get("away_team"),
+        "match": safest_bet.get("fixture")
+    }
+
+    return json.dumps({"display": recommendation_text, "context": context})
+
+
+@tool
+def place_simulated_bet(current_balance: float, team_one: str, team_two: str, amount: float, bet_on: str) -> str:
+    """
+    Use this tool to place a SIMULATED bet on a match.
+    You need the current_balance, the two teams, the amount to bet, and what the user is betting on.
+    The 'bet_on' parameter should be one of 'home_win', 'away_win', or 'draw'.
+    This tool will check the balance, calculate winnings, and return the result.
+    """
+    logging.info(f"--- Running place_simulated_bet for {team_one} vs {team_two} ---")
+    
+    if amount <= 0: return json.dumps({"display": "The amount to bet must be positive.", "context": None})
+    if amount > current_balance:
+        return json.dumps({
+            "display": f"<b>Insufficient balance.</b> Your current balance is ${current_balance:.2f}, but you tried to bet ${amount:.2f}.",
+            "context": None
+        })
+
+    odds_data = _get_match_odds_data(team_one, team_two)
+    if "error" in odds_data:
+        return json.dumps({"display": f"I couldn't place the bet. Reason: {odds_data['error']}", "context": None})
+
+    odds_value = None
+    outcome_str = ""
+    if bet_on == "draw": 
+        odds_value = odds_data.get("match_result", {}).get("draw")
+        outcome_str = "a draw"
+    elif bet_on == "home_win": 
+        odds_value = odds_data.get("match_result", {}).get("home_win")
+        outcome_str = f"a {odds_data.get('team_one', team_one)} win"
+    elif bet_on == "away_win": 
+        odds_value = odds_data.get("match_result", {}).get("away_win")
+        outcome_str = f"a {odds_data.get('team_two', team_two)} win"
+        
+    if odds_value is None:
+        return json.dumps({"display": f"I found the match, but couldn't find odds for '{bet_on}'.", "context": None})
+
+    winnings = amount * odds_value
+    new_balance = current_balance - amount
+    
+    bet_details = {
+        "match": odds_data.get('match', f"{team_one} vs {team_two}"),
+        "amount_bet": amount,
+        "outcome_bet_on": outcome_str,
+        "odds": odds_value,
+        "potential_winnings": winnings
+    }
+    
+    display_message = (
+        f"<b>Bet Placed (Simulated)!</b><br><br>"
+        f"You bet <b>${amount:.2f}</b> on {outcome_str} in the match '{bet_details['match']}'.<br>"
+        f"The odds are <b>{odds_value}</b>, for potential winnings of <b>${winnings:.2f}</b>.<br>"
+        f"Your new balance is <b>${new_balance:.2f}</b>."
+    )
+    
+    context = {
+        "balance_change": -amount,
+        "new_bet": bet_details
+    }
+    
+    return json.dumps({"display": display_message, "context": context})
 

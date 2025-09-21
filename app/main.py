@@ -69,24 +69,33 @@ def chat(request: ChatRequest):
             status_code=503, # Service Unavailable
             detail="The chatbot is still initializing its knowledge base. Please wait a moment and try again."
         )
+
+    # Get the complete state from the previous turn
     current_state = session_manager.get_session(request.session_id)
     
+    # Append the new user message to the message history from the previous state
     current_state["messages"].append(HumanMessage(content=request.user_input))
+
+    # Invoke the agent with the FULL updated state, not just the new message
+    response_state = chat_agent.invoke(
+        current_state,
+        config={"configurable": {"session_id": request.session_id}}
+    )
     
-    response_state = chat_agent.invoke(current_state)
+    # Save the final state of the conversation
+    session_manager.save_session(request.session_id, response_state)
+
+    final_message = response_state["messages"][-1]
     
-    final_message = response_state['messages'][-1]
-    
-    session_manager.update_session(request.session_id, response_state)
-    
-    # Fetch the latest balance for the default user to return to the UI
-    latest_balance_data = api_client.get_user_balance()
+    # The 'balance' is now part of the agent's state, which we just received.
+    latest_balance = response_state.get("simulated_balance")
     
     return {
         "response": final_message.content,
-        "session_id": request.session_id, # Re-add the missing session_id
-        "balance": latest_balance_data.get("money", 0.0) if latest_balance_data else 0.0
+        "session_id": request.session_id,
+        "balance": latest_balance if latest_balance is not None else 0.0,
     }
+
 
 if __name__ == "__main__":
     import uvicorn

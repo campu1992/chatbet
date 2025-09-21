@@ -14,14 +14,13 @@ from app.tools.chat_tools import (
     get_fixtures_by_date,
     find_team_fixture,
     get_teams_by_tournament,
-    get_user_balance,
-    place_real_bet,
     get_odds_for_match,
     get_daily_odds_analysis, # Add the new tool
     get_match_recommendation, # Add new tool
     get_betting_recommendation, # Add new tool
     calculate_winnings_for_match, # Add new tool
     get_odds_for_outcome, # Add new tool
+    place_simulated_bet, # Add the new tool
 )
 
 # --- State Definition ---
@@ -30,20 +29,21 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
     # This will hold the JSON response from the get_odds_for_match tool
     match_context: Optional[dict]
+    simulated_balance: Optional[float]
+    bets: List[dict]
 
 # --- Tools and Model Setup ---
 tools = [
     get_fixtures_by_date,
     find_team_fixture,
     get_teams_by_tournament,
-    get_user_balance,
-    place_real_bet,
     get_odds_for_match,
     get_daily_odds_analysis, # Add the new tool
     get_match_recommendation, # Add new tool
     get_betting_recommendation, # Add new tool
     calculate_winnings_for_match, # Add new tool
     get_odds_for_outcome, # Add new tool
+    place_simulated_bet, # Add the new tool
 ]
 tool_executor = ToolExecutor(tools)
 
@@ -58,27 +58,51 @@ model = model.bind_tools(tools)
 def call_model(state: AgentState):
     messages = state["messages"]
     match_context = state.get("match_context")
+    simulated_balance = state.get("simulated_balance")
+    bets = state.get("bets")
     
-    system_prompt = """You are a helpful sports betting assistant. Use the provided tools to answer user questions accurately.
+    system_prompt = """You are a helpful and proactive sports betting assistant that allows users to simulate betting.
 
-Key instructions:
-- If a user asks for the odds of a specific outcome (e.g., "how much does a draw pay?") but does NOT provide an amount, you MUST use the `get_odds_for_outcome` tool.
-- For any user question that involves calculating winnings (e.g., "How much would I win if..."), you MUST use the `calculate_winnings_for_match` tool. Do not perform calculations yourself.
-- The `calculate_winnings_for_match` tool returns a complete, user-ready answer. You MUST present its output directly to the user without rephrasing, preserving all markdown formatting.
-- If you need to call `calculate_winnings_for_match` but don't know the teams, ask the user for them first.
-- If a user asks for a match recommendation WITHOUT an amount (e.g., "What match should I bet on?"), you MUST use the `get_match_recommendation` tool. The tool will provide a complete response.
-- If a user asks for a betting recommendation WITH an amount (e.g., "What can I bet with $100?"), you MUST use the `get_betting_recommendation` tool.
-- After presenting a recommendation from either tool, ALWAYS ask a follow-up question like: "Are you interested in placing a bet on this match, or did you have another game in mind?"
-- When you receive output from `get_betting_recommendation`, present it clearly to the user. You can rephrase it slightly to be more conversational, but you MUST preserve the markdown formatting (bolding, lists, and line breaks) for readability.
-- When using `get_daily_odds_analysis`, you MUST present the full analysis, including the explanation for why a match is the safest, riskiest, or most competitive.
-- When asked for odds on a specific match, use `get_odds_for_match`.
-- Always include match times when listing fixtures.
-- Keep responses natural, friendly, and helpful.
+## Core Objective
+Your main goal is to help users explore betting options by simulating bets within the current session. All bets are simulated and will be lost if the session is refreshed.
+
+## Key Instructions
+- **Balance:** ALWAYS be aware of the `simulated_balance`. When a user asks about their balance, respond using this value.
+- **Placing Bets:** To place a bet, you MUST use the `place_simulated_bet` tool. This is the only way to alter the user's balance.
+- **Tool Arguments:** The `place_simulated_bet` tool requires the `current_balance`. You MUST pass the `simulated_balance` from the state to this argument.
+- **Listing Bets:** If a user asks to see their bets, list the bets from the `bets` list in the context. Do not use a tool for this. Format it nicely.
+- **Recommendations (No Amount):** If a user asks for a recommendation WITHOUT an amount (e.g., "What should I bet on?"), use `get_match_recommendation`.
+- **Recommendations (With Amount):** If a user asks for a recommendation WITH an amount (e.g., "What can I bet with $100?"), use `get_betting_recommendation`.
+- **Calculating Winnings:** For "what if" scenarios (e.g., "How much would I win if I bet $50?"), use the `calculate_winnings_for_match` tool. This does NOT place a bet or change the balance.
+- **Context Awareness:** Pay close attention to `match_context`. If a match is being discussed, use it for follow-up questions.
+- **Follow-up:** After a recommendation or a bet, always ask a helpful follow-up question.
 """
     
-    # If there's match context, add it to the system prompt for the LLM
+    # Add dynamic context to the prompt
+    if simulated_balance is not None:
+        system_prompt += f"\\n\\n## SESSION STATE\\n- Current Simulated Balance: ${simulated_balance:.2f}"
+    if bets:
+        system_prompt += "\\n- Bets Placed This Session:"
+        for bet in bets:
+            system_prompt += f"\\n  - Bet ${bet['amount_bet']:.2f} on {bet['outcome_bet_on']} in '{bet['match']}'"
+    
     if match_context:
-        system_prompt += f"\n\n## CONTEXT: LAST MATCH ODDS\nYou are currently discussing the following match, and you have its odds data. Use this data for any follow-up questions.\n```json\n{json.dumps(match_context, indent=2)}\n```"
+        if "match_result" in match_context and match_context.get("match"):
+            system_prompt += (
+                "\\n\\n## CONTEXT: LAST MATCH ODDS\\n"
+                "You are currently discussing the following match, and you have its odds data. "
+                "Use this data for any follow-up questions.\\n"
+                f"```json\\n{json.dumps(match_context, indent=2)}\\n```"
+            )
+        elif "team_one" in match_context and "team_two" in match_context:
+            team_one = match_context.get('team_one', 'Unknown')
+            team_two = match_context.get('team_two', 'Unknown')
+            if team_one and team_two:
+                system_prompt += (
+                    "\\n\\n## CONTEXT: CURRENT MATCH\\n"
+                    f"You are currently discussing the match between **{team_one}** and **{team_two}**. "
+                    "Use these teams for any follow-up questions (like calculating winnings)."
+                )
 
     system_message = SystemMessage(content=system_prompt)
     
@@ -88,32 +112,49 @@ Key instructions:
 
 def call_tool(state: AgentState):
     last_message = state["messages"][-1]
-    # The model can return multiple tool calls, we'll handle the first one.
     action_dict = last_message.tool_calls[0]
-    
-    # Wrap the action dictionary in a ToolInvocation object that the executor expects.
-    tool_invocation = ToolInvocation(
-        tool=action_dict["name"],
-        tool_input=action_dict["args"],
-    )
-    
-    # All tools are now stateless from the graph's perspective
-    tool_output = tool_executor.invoke(tool_invocation)
-    
-    # Check if the tool call is from our odds tool
-    tool_name = tool_invocation.tool
-    if tool_name == "get_odds_for_match":
-        # The output is a JSON string, so we parse it
-        try:
-            tool_output_dict = json.loads(tool_output)
-            # If there's no error, save it to the context
-            if "error" not in tool_output_dict:
-                state["match_context"] = tool_output_dict
-        except json.JSONDecodeError:
-            # Handle cases where the output is not valid JSON
-            pass # Or log an error
 
-    return {"messages": [ToolMessage(content=str(tool_output), tool_call_id=action_dict["id"])]}
+    # Special handling for place_simulated_bet to inject the current balance
+    tool_name = action_dict["name"]
+    tool_input = action_dict["args"]
+    if tool_name == "place_simulated_bet":
+        tool_input["current_balance"] = state.get("simulated_balance")
+
+    tool_invocation = ToolInvocation(tool=tool_name, tool_input=tool_input)
+    
+    tool_output = tool_executor.invoke(tool_invocation)
+    tool_output_content = str(tool_output)
+    context_update = {}
+
+    try:
+        parsed_output = json.loads(tool_output)
+        if isinstance(parsed_output, dict):
+            new_context = None
+            if "context" in parsed_output and parsed_output["context"]:
+                new_context = parsed_output["context"]
+                if "display" in parsed_output:
+                    tool_output_content = parsed_output["display"]
+            elif "match" in parsed_output and "error" not in parsed_output:
+                new_context = parsed_output
+
+            if new_context:
+                current_context = state.get("match_context") or {}
+                current_context.update(new_context)
+                context_update["match_context"] = current_context
+
+                # Handle simulation updates
+                if "balance_change" in new_context:
+                    current_balance = state.get("simulated_balance", 0.0)
+                    context_update["simulated_balance"] = current_balance + new_context["balance_change"]
+                if "new_bet" in new_context:
+                    current_bets = state.get("bets", [])
+                    context_update["bets"] = current_bets + [new_context["new_bet"]]
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    tool_message = ToolMessage(content=tool_output_content, tool_call_id=action_dict["id"])
+    return {"messages": [tool_message], **context_update}
+
 
 # --- Graph Logic ---
 def should_continue(state: AgentState):
