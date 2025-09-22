@@ -32,6 +32,8 @@ This README provides a comprehensive overview of the project, including its arch
 
 Follow these steps to set up and run the project locally using Docker.
 
+**Note:** The very first time you run the application, the backend needs to build a cache of team and tournament data from the live API. This process can take **up to 10 minutes**, depending on your internet connection. Subsequent launches will be much faster.
+
 ### Prerequisites
 
 - **Docker** and **Docker Compose** must be installed on your system.
@@ -56,22 +58,21 @@ Now, open the `.env` file and add your specific credentials. See the [Environmen
 
 ### 3. Build and Run the Application
 
-Execute the following command from the project's root directory:
+We've created simple scripts to automate the startup process. These scripts will build and start the Docker containers, intelligently wait for the backend caches to be fully initialized, and then automatically open the chatbot in your default web browser. This is the recommended way to run the application.
 
+**On Linux or macOS:**
+Make the script executable first, then run it.
 ```bash
-docker-compose up --build
+chmod +x start.sh
+./start.sh
 ```
 
-- This command builds the Docker images for the backend and frontend services and starts the containers.
-- The `--build` flag ensures that any code changes are included.
+**On Windows:**
+```bash
+start.bat
+```
 
-### 4. Access the Chatbot
-
-Once the containers are running, open your web browser and navigate to:
-
-**`http://localhost:8501`**
-
-The Streamlit frontend will wait until the backend services and caches are fully initialized before enabling the chat input.
+The script will handle everything for you. Once the app is ready, it will open at `http://localhost:8501`.
 
 ---
 
@@ -129,6 +130,7 @@ I chose a decoupled, microservices-style architecture to ensure modularity, scal
 -   **Decoupled Frontend/Backend**: The system is split into two main services: a **FastAPI backend** for the core logic and a **Streamlit frontend** for the user interface. This separation allows for independent development, deployment, and scaling. The frontend can be updated without touching the backend, and vice-versa.
 -   **Stateful Agent Orchestration (LangGraph)**: Instead of a simple agent loop, I used **LangGraph** to build a stateful graph. This robust approach provides explicit control over the conversational flow, making it easier to manage complex interactions, tool calls, and error handling. The `AgentState` object acts as a central hub for all session data.
 -   **Tool-Based Logic**: All business logic and external API interactions are encapsulated within discrete **Tools** (e.g., `get_fixtures_by_date`, `get_daily_odds_analysis`). This makes the system highly extensible; adding new capabilities is as simple as defining a new tool function and making the LLM aware of it.
+-   **Modular Prompts**: The core system prompt that guides the LLM is managed in a separate `app/prompts` directory. This decouples the instructional logic from the agent's graph definition, making it easier to iterate on and manage the agent's behavior and persona.
 -   **Asynchronous Backend (FastAPI)**: FastAPI's native `async` support is critical for an I/O-bound application like this, which spends much of its time waiting for responses from the LLM and the external sports API. This allows the server to handle many concurrent users efficiently.
 
 ### 2. LLM: Which model did you use and why?
