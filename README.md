@@ -32,8 +32,6 @@ This README provides a comprehensive overview of the project, including its arch
 
 Follow these steps to set up and run the project locally using Docker.
 
-**Note:** The very first time you run the application, the backend needs to build a cache of team and tournament data from the live API. This process can take **up to 10 minutes**, depending on your internet connection. Subsequent launches will be much faster.
-
 ### Prerequisites
 
 - **Docker** and **Docker Compose** must be installed on your system.
@@ -58,21 +56,15 @@ Now, open the `.env` file and add your specific credentials. See the [Environmen
 
 ### 3. Build and Run the Application
 
-We've created simple scripts to automate the startup process. These scripts will build and start the Docker containers, intelligently wait for the backend caches to be fully initialized, and then automatically open the chatbot in your default web browser. This is the recommended way to run the application.
+Use Docker Compose to build the images and start the services.
 
-**On Linux or macOS:**
-Make the script executable first, then run it.
 ```bash
-chmod +x start.sh
-./start.sh
+docker-compose up --build
 ```
 
-**On Windows:**
-```bash
-start.bat
-```
+The application will be available at `http://localhost:8501`.
 
-The script will handle everything for you. Once the app is ready, it will open at `http://localhost:8501`.
+The first time a query requires fetching all teams (e.g., "Which teams are in the Premier League?"), there might be a one-time delay as the data is fetched from the live API and cached in memory for the duration of the session.
 
 ---
 
@@ -104,9 +96,18 @@ GEMINI_MODEL=gemini-1.5-pro-latest
 
 Interact with the chatbot using natural language to get sports and betting information. The agent is designed to handle a wide range of queries.
 
+*(The following images demonstrate the chatbot in action.)*
 
-https://github.com/user-attachments/assets/74a38b65-bfa1-4c20-a8db-10f7b284f898
-
+image.png
+image.png
+image.png
+image.png
+image.png
+image.png
+image.png
+image.png
+image.png
+image.png
 
 ---
 
@@ -142,10 +143,10 @@ Conversational context is managed through a multi-layered session management str
 
 ### 4. Optimization: How did you optimize API queries?
 
-I implemented several strategies to minimize latency and reduce redundant calls to the external sports API.
+I implemented an on-demand, in-memory caching strategy to minimize latency and reduce redundant calls to the external sports API.
 
--   **In-Memory Caching**: On startup, the backend populates two singleton caches: `TeamNameCache` and `TournamentNameCache`. These caches store relatively static data (like mappings of team names to IDs) that is frequently required for tool logic. This avoids hitting the API for the same information repeatedly.
--   **Asynchronous Cache Population**: To ensure the main server process is not blocked, cache population runs in a background thread. A `/health/status` endpoint allows the frontend to poll the backend and wait until the caches are ready before allowing user interaction, preventing errors and improving the user experience.
+-   **On-Demand In-Memory Caching**: Instead of a long initial load, the application starts instantly. Data from the sports API (like the full list of teams or tournaments) is fetched only when it's first needed by a user's query.
+-   **Singleton Cache Objects**: Once fetched, this data is stored in singleton cache objects (`TeamNameCache`, `TournamentNameCache`) for the lifetime of the server process. This means the expensive API call for a given resource only happens once, and all subsequent users and sessions benefit from the in-memory data, ensuring fast responses.
 -   **Consolidated Tool Logic**: Complex queries like "What's the most competitive match today?" are handled by a single, powerful tool (`get_daily_odds_analysis`). This tool encapsulates all the necessary logic—fetching fixtures, retrieving odds for multiple matches, and performing analysis—into one optimized operation, preventing the LLM from making a series of slow, sequential tool calls.
 
 ### 5. Scalability: How did you handle multiple concurrent users?

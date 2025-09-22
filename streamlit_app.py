@@ -13,18 +13,6 @@ st.set_page_config(
 # --- Backend API Configuration ---
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
-def check_backend_ready():
-    """Polls the backend's health check endpoint until the cache is ready."""
-    while True:
-        try:
-            response = requests.get(f"{API_BASE_URL}/health/status")
-            if response.status_code == 200 and response.json().get("cache_ready"):
-                return True
-        except requests.ConnectionError:
-            # Backend is not up yet, wait a bit
-            pass
-        time.sleep(2) # Wait 2 seconds before polling again
-
 def main():
     """Main function to run the Streamlit app."""
     st.title("ChatBet Assistant ⚽")
@@ -36,15 +24,7 @@ def main():
         # Generate a unique session ID for the user
         st.session_state.session_id = os.urandom(24).hex()
 
-    # --- Cache Loading UI ---
-    if "backend_ready" not in st.session_state or not st.session_state.backend_ready:
-        with st.spinner("Initializing the assistant's knowledge base... Please wait a moment."):
-            if check_backend_ready():
-                st.session_state.backend_ready = True
-                st.rerun() # Rerun the script to show the main chat UI
-        return # Stop execution until backend is ready
-
-    # --- Main Chat Interface (only shows after cache is ready) ---
+    # --- Main Chat Interface ---
     # Display chat messages from history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
